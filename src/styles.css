@@ -19,7 +19,7 @@ body { margin: 0; }
 
 .app {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1.3fr;
+  grid-template-columns: 1fr 1fr 2fr;
   grid-template-rows: auto 1fr;
   height: 100vh;
 }
@@ -66,6 +66,8 @@ body { margin: 0; }
 
 .section { margin-bottom: 14px; }
 .section h3 { margin: 0 0 6px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .6px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.section-head h3 { margin: 0 0 6px; }
 .row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .row label { width: 130px; color: var(--dim); }
 .row input[type="number"], .row input[type="text"], .row select {

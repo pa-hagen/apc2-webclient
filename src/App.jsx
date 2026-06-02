@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { useApc2Socket, defaultWsUrl } from './api/socket.js';
+import { useApc2Socket, defaultWsUrl, httpBaseFromWs } from './api/socket.js';
 import GcsPanel from './components/GcsPanel.jsx';
-import VehiclePanel from './components/VehiclePanel.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import LivePanel from './components/LivePanel.jsx';
 
 export default function App() {
   const [url, setUrl] = useState(defaultWsUrl());
-  const { status, welcome, snapshot, stats, controlLink, captures, records, wire, settingResults, options, diagnose, send } = useApc2Socket(url);
-  const runDiagnose = () => send({ t: 'diagnose', reqId: `diag-${Date.now()}` });
+  const { status, welcome, snapshot, stats, controlLink, captures, records, wire, wireCam, images, getResults, settingResults, send } = useApc2Socket(url);
+  const httpBase = httpBaseFromWs(url);
 
   // Persist whatever the user typed so a refresh keeps the same target.
   useEffect(() => { try { localStorage.setItem('apc2_ws', url); } catch { /* ignore */ } }, [url]);
@@ -30,18 +29,20 @@ export default function App() {
       </div>
 
       <GcsPanel send={send} status={status} stats={stats} />
-      <VehiclePanel send={send} status={status} />
       <SettingsPanel
         send={send} status={status} controlLink={controlLink}
-        settingResults={settingResults} options={options}
-        diagnose={diagnose} runDiagnose={runDiagnose}
+        getResults={getResults} settingResults={settingResults}
       />
       <LivePanel
         snapshot={snapshot}
         captures={captures}
         records={records}
         wire={wire}
+        wireCam={wireCam}
         controlLink={controlLink}
+        apc2={welcome?.apc2}
+        images={images}
+        httpBase={httpBase}
       />
     </div>
   );

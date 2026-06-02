@@ -1,9 +1,30 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const fmt = (v, d = 3) => (v == null || Number.isNaN(v) ? '—' : (typeof v === 'number' ? v.toFixed(d) : String(v)));
 const time = (ts) => new Date(ts).toISOString().slice(11, 23);
+const basename = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 
-export default function LivePanel({ snapshot, captures, records, wire, controlLink }) {
+// A captured image is downloadable from apc2 at /image?seq=<seq>. `label` falls back to the raw
+// filename until the image queue reports the final (renamed) name via the images map.
+function ImageLink({ httpBase, seq, label }) {
+  if (seq == null || !httpBase) return <>{label || '—'}</>;
+  return (
+    <a href={`${httpBase}/image?seq=${seq}`} download title="download image">
+      {label || `seq ${seq}`}
+    </a>
+  );
+}
+
+export default function LivePanel({ snapshot, captures, records, wire, wireCam = [], controlLink, apc2, images = {}, httpBase = '' }) {
+  const [showWire, setShowWire] = useState(false);
+  const [camOnly, setCamOnly] = useState(false);
+
+  // The camhandler camera component apc2 fronts — defaults to 1/100 until the welcome arrives.
+  const camSys = apc2?.sysid ?? 1;
+  const camComp = apc2?.compid ?? 100;
+  // wireCam is filtered at ingestion (before the cap), so the camhandler view isn't starved by
+  // broadcast telemetry the way a post-cap .filter() would be.
+  const shownWire = camOnly ? wireCam : wire;
   return (
     <div className="panel">
       <h2>Live</h2>
@@ -57,7 +78,9 @@ export default function LivePanel({ snapshot, captures, records, wire, controlLi
                     <td>{time(c.ts)}</td>
                     <td>{c.seq}</td>
                     <td>{c.success ? 'OK' : 'FAIL'}{c.drift ? ' (drift)' : ''}{c.orphan ? ' (orphan)' : ''}</td>
-                    <td>{c.success ? (c.file || '—') : (c.reason || '—')}</td>
+                    <td>{c.success
+                      ? <ImageLink httpBase={httpBase} seq={c.seq} label={images[c.seq]?.file || basename(c.file)} />
+                      : (c.reason || '—')}</td>
                   </tr>
                 ))}
               </tbody>
@@ -79,7 +102,9 @@ export default function LivePanel({ snapshot, captures, records, wire, controlLi
                     <tr key={i}>
                       <td>{time(r.ts)}</td>
                       <td>{rec.seq}</td>
-                      <td>{rec.filename || '—'}</td>
+                      <td>{rec.captured && rec.filename
+                        ? <ImageLink httpBase={httpBase} seq={rec.seq} label={images[rec.seq]?.file || basename(rec.filename)} />
+                        : (basename(rec.filename) || '—')}</td>
                       <td>{fmt(rec.lat, 5)} / {fmt(rec.lon, 5)}</td>
                       <td>{fmt(rec.gimbal_yaw_abs_deg, 1)}°</td>
                       <td>{fmt(rec.agl_m, 1)}</td>
@@ -93,14 +118,25 @@ export default function LivePanel({ snapshot, captures, records, wire, controlLi
         </div>
 
         <div className="section">
-          <h3>MAVLink wire log</h3>
-          <div className="log">
-            {wire.map((w, i) => (
-              <div key={i} className={`line ${w.dir}`}>
-                {time(w.ts)} {w.dir === 'in' ? '<-' : w.dir === 'out' ? '->' : '!!'} {w.name || `msgid=${w.msgid}`}{w.error ? ` ${w.error}` : ''}
-              </div>
-            ))}
+          <div className="section-head">
+            <h3>MAVLink wire log ({shownWire.length}{camOnly ? ' camhandler' : ''})</h3>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--dim)' }}>
+              <input type="checkbox" checked={camOnly} onChange={(e) => setCamOnly(e.target.checked)} />
+              only camhandler ({camSys}/{camComp})
+            </label>
+            <button className="secondary" onClick={() => setShowWire((v) => !v)}>
+              {showWire ? 'Hide' : 'Show'}
+            </button>
           </div>
+          {showWire && (
+            <div className="log">
+              {shownWire.map((w, i) => (
+                <div key={i} className={`line ${w.dir}`}>
+                  {time(w.ts)} {w.dir === 'in' ? '<-' : w.dir === 'out' ? '->' : '!!'}{w.sysid != null ? ` ${w.sysid}/${w.compid}` : ''} {w.name || `msgid=${w.msgid}`}{w.cmd ? ` (${[w.cmd.id, w.cmd.name].filter((x) => x != null && x !== '').join(' ')})` : ''}{w.targetSystem != null ? ` →${w.targetSystem}/${w.targetComponent}` : ''}{w.error ? ` ${w.error}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
       </div>

@@ -7,14 +7,18 @@ import React, { useState } from 'react';
 export default function GcsPanel({ send, status, stats }) {
   const [count, setCount] = useState(1);
   const [seqStart, setSeqStart] = useState('');
+  const [pressCount, setPressCount] = useState(0);
   const disabled = status !== 'open';
 
-  const capture = () => send({
-    t: 'gcs',
-    cmd: 'capture',
-    count: Math.max(1, Math.min(100, parseInt(count, 10) || 1)),
-    seqStart: seqStart === '' ? undefined : parseInt(seqStart, 10),
-  });
+  const capture = () => {
+    setPressCount((n) => n + 1);
+    send({
+      t: 'gcs',
+      cmd: 'capture',
+      count: Math.max(1, Math.min(100, parseInt(count, 10) || 1)),
+      seqStart: seqStart === '' ? undefined : parseInt(seqStart, 10),
+    });
+  };
   const setMode = (mode) => send({ t: 'gcs', cmd: 'set-mode', mode });
   const request = (which) => send({ t: 'gcs', cmd: 'request', which });
 
@@ -35,6 +39,11 @@ export default function GcsPanel({ send, status, stats }) {
           </div>
           <div className="row">
             <button disabled={disabled} onClick={capture}>IMAGE_START_CAPTURE</button>
+            <button className="secondary" disabled={pressCount === 0} onClick={() => setPressCount(0)}>Reset</button>
+          </div>
+          <div className="row">
+            <label>Button presses</label>
+            <span className="v" style={{ fontVariantNumeric: 'tabular-nums' }}>{pressCount}</span>
           </div>
         </div>
 

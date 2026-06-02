@@ -1,160 +1,102 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 
-// Numeric-input row (used for focus distance).
-function NumericRow({ label, sKey, defaultValue, step = 0.1, unit, send, status, lastResult }) {
-  const [value, setValue] = useState(defaultValue);
-  const [inFlightAt, setInFlightAt] = useState(0);
-  const disabled = status !== 'open';
-  const pending = inFlightAt > 0 && (!lastResult || lastResult.ts < inFlightAt);
+// Camera settings, driven through camhandler's ControlLink. The "current values" section reads live
+// values (shutter/ISO/WB/f-stop/focus distance); the exposure section can also set the shutter speed.
+// All values speak the same human-readable string form the camera/list flow uses (e.g. "1/500").
 
-  const apply = () => {
-    const num = parseFloat(value);
-    if (!Number.isFinite(num)) return;
-    setInFlightAt(Date.now());
-    send({ t: 'setting', key: sKey, value: num, reqId: `${sKey}-${Date.now()}` });
-  };
+// Settings camhandler can READ today (its ControlLink `get` handler). "Request all" fans out to these.
+const READABLE = [
+  { key: 'shutter_speed', label: 'Shutter speed' },
+  { key: 'iso', label: 'ISO' },
+  { key: 'white_balance', label: 'White balance' },
+  { key: 'f_number', label: 'F-stop' },
+  { key: 'focus_distance_m', label: 'Focus distance' },
+];
 
-  return (
-    <div className="section">
-      <div className="row">
-        <label>{label}</label>
-        <input type="number" step={step} value={value} onChange={(e) => setValue(e.target.value)} />
-        <span style={{ color: 'var(--dim)' }}>{unit}</span>
-        <button disabled={disabled || pending} onClick={apply}>{pending ? 'Setting…' : 'Apply'}</button>
-      </div>
-      {lastResult && (
-        <div className="row" style={{ marginLeft: 130 }}>
-          {lastResult.ok
-            ? <span className="badge good">OK · value={lastResult.value}</span>
-            : <span className="badge bad">FAIL · {lastResult.error || 'unknown'}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Dropdown row (used for ISO / WB / Shutter). Auto-fetches the option list once the WS is open
-// and the ControlLink is up. listKey is the property name camhandler expects in {type:"list"};
-// setKey is the matching {type:"set"} key (typically "<listKey>_index").
-function DropdownRow({ label, listKey, setKey, send, status, controlLink, options, lastResult }) {
-  const [idx, setIdx] = useState(0);
-  const [inFlightAt, setInFlightAt] = useState(0);
-  const opts = options[listKey];
-  const disabled = status !== 'open' || controlLink?.state !== 'up' || !opts?.ok || !opts.options?.length;
-  const pending = inFlightAt > 0 && (!lastResult || lastResult.ts < inFlightAt);
-
-  // Auto-request the option list as soon as both WS and ControlLink are up, and refresh whenever
-  // ControlLink reconnects (e.g. camhandler restart -> camera firmware may differ).
-  useEffect(() => {
-    if (status === 'open' && controlLink?.state === 'up' && !opts) {
-      send({ t: 'list-options', key: listKey, reqId: `list-${listKey}-${Date.now()}` });
-    }
-  }, [status, controlLink?.state, listKey, opts, send]);
-
-  const refresh = () => send({ t: 'list-options', key: listKey, reqId: `list-${listKey}-${Date.now()}` });
-  const apply = () => {
-    setInFlightAt(Date.now());
-    send({ t: 'setting', key: setKey, value: idx, reqId: `${setKey}-${Date.now()}` });
-  };
-
-  return (
-    <div className="section">
-      <div className="row">
-        <label>{label}</label>
-        <select value={idx} onChange={(e) => setIdx(parseInt(e.target.value, 10))} disabled={disabled} style={{ width: 180 }}>
-          {(opts?.options || []).map((o, i) => <option key={i} value={i}>{i}: {o}</option>)}
-          {!opts?.options?.length && <option value={0}>(no options loaded)</option>}
-        </select>
-        <button disabled={disabled || pending} onClick={apply}>{pending ? 'Setting…' : 'Apply'}</button>
-        <button className="secondary" disabled={status !== 'open' || controlLink?.state !== 'up'} onClick={refresh}>↻</button>
-      </div>
-      {opts && !opts.ok && (
-        <div className="row" style={{ marginLeft: 130, color: 'var(--bad)' }}>
-          list failed: {opts.error || 'unknown'}
-        </div>
-      )}
-      {lastResult && (
-        <div className="row" style={{ marginLeft: 130 }}>
-          {lastResult.ok
-            ? <span className="badge good">OK · index={lastResult.value}</span>
-            : <span className="badge bad">FAIL · {lastResult.error || 'unknown'}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Camera settings driven through camhandler's ControlLink `set` / `list` commands.
-// Adding a new setting: add a CameraDevice setter + lister, an arm in camhandler.cpp's
-// setting_handler / list_handler, and one row below.
-export default function SettingsPanel({ send, status, controlLink, settingResults = {}, options = {}, diagnose, runDiagnose }) {
+export default function SettingsPanel({ send, status, controlLink, getResults = {}, settingResults = {} }) {
+  const [setAt, setSetAt] = useState(0);
+  const [value, setValue] = useState('');
+  // Per-key "requested at" timestamps so each row can show "Requesting…" until a fresh result lands.
+  const [reqAt, setReqAt] = useState({});
   const linkDown = controlLink?.state !== 'up';
+  const disabled = status !== 'open' || linkDown;
+
+  const setResult = settingResults.shutter_speed;
+  const setting = setAt > 0 && (!setResult || setResult.ts < setAt);
+
+  const requestKey = (key) => {
+    const ts = Date.now();
+    setReqAt((prev) => ({ ...prev, [key]: ts }));
+    send({ t: 'get-setting', key, reqId: `get-${key}-${ts}` });
+  };
+  const requestAll = () => READABLE.forEach((r) => requestKey(r.key));
+
+  const applyExposure = () => {
+    const v = value.trim();
+    if (!v) return;
+    setSetAt(Date.now());
+    send({ t: 'setting', key: 'shutter_speed', value: v, reqId: `set-shutter-${Date.now()}` });
+  };
+
+  const renderValue = (key) => {
+    const r = getResults[key];
+    const pending = (reqAt[key] || 0) > 0 && (!r || r.ts < reqAt[key]);
+    if (pending) return <span className="badge">Requesting…</span>;
+    if (!r) return <span style={{ color: 'var(--dim)' }}>—</span>;
+    return r.ok
+      ? <span className="badge good">{r.value || '(empty)'}</span>
+      : <span className="badge bad">FAIL · {r.error || 'unknown'}</span>;
+  };
+
   return (
     <div className="panel">
       <h2>Camera Settings</h2>
       <div className="panel-body">
         {linkDown && (
           <div className="section" style={{ color: 'var(--warn)' }}>
-            ControlLink is {controlLink?.state ?? 'unknown'} — camhandler must be running with a connected camera for settings to take effect.
+            ControlLink is {controlLink?.state ?? 'unknown'} — camhandler must be running with a connected camera for settings to work.
           </div>
         )}
 
         <div className="section">
-          <div className="row">
-            <button className="secondary" disabled={status !== 'open' || linkDown} onClick={runDiagnose}>
-              Diagnose writability
-            </button>
-            <span style={{ color: 'var(--dim)' }}>
-              Asks the camera what's currently settable. Most writes need PriorityKey=PC Remote + the camera in PC Remote USB mode.
-            </span>
+          <div className="section-head">
+            <h3>Current values</h3>
+            <button disabled={disabled} onClick={requestAll}>Request all</button>
           </div>
-          {diagnose && !diagnose.ok && (
-            <div className="row" style={{ marginLeft: 0, color: 'var(--bad)' }}>
-              diagnose failed: {diagnose.error || 'unknown'}
-            </div>
-          )}
-          {diagnose?.ok && (
-            <div className="records" style={{ marginTop: 6, maxHeight: 220 }}>
-              <table>
-                <thead><tr><th>property</th><th>writable</th><th>options</th></tr></thead>
-                <tbody>
-                  {diagnose.entries.map((e, i) => (
-                    <tr key={i}>
-                      <td>{e.name}</td>
-                      <td>
-                        {e.writable === 1 ? <span className="badge good">yes</span>
-                          : e.writable === 0 ? <span className="badge">read-only</span>
-                          : <span className="badge bad">not reported</span>}
-                      </td>
-                      <td>{e.options}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="kv">
+            {READABLE.map((r) => (
+              <React.Fragment key={r.key}>
+                <div className="k">{r.label}</div>
+                <div className="v" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button className="secondary" disabled={disabled} onClick={() => requestKey(r.key)}>Get</button>
+                  {renderValue(r.key)}
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        <div className="section">
+          <h3>Set exposure time</h3>
+          <div className="row">
+            <label>Set exposure</label>
+            <input
+              type="text" placeholder="e.g. 1/500" value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyExposure(); }}
+            />
+            <button disabled={disabled || setting || !value.trim()} onClick={applyExposure}>
+              {setting ? 'Setting…' : 'Set'}
+            </button>
+          </div>
+          {setResult && !setting && (
+            <div className="row">
+              {setResult.ok
+                ? <span className="badge good">set OK · {setResult.value}</span>
+                : <span className="badge bad">FAIL · {setResult.error || 'unknown'}</span>}
             </div>
           )}
         </div>
-        <NumericRow
-          label="Focus distance" sKey="focus_distance_m"
-          defaultValue={5.0} step={0.1} unit="m"
-          send={send} status={status}
-          lastResult={settingResults.focus_distance_m}
-        />
-        <DropdownRow
-          label="ISO" listKey="iso" setKey="iso_index"
-          send={send} status={status} controlLink={controlLink}
-          options={options} lastResult={settingResults.iso_index}
-        />
-        <DropdownRow
-          label="White Balance" listKey="white_balance" setKey="white_balance_index"
-          send={send} status={status} controlLink={controlLink}
-          options={options} lastResult={settingResults.white_balance_index}
-        />
-        <DropdownRow
-          label="Shutter Speed" listKey="shutter_speed" setKey="shutter_speed_index"
-          send={send} status={status} controlLink={controlLink}
-          options={options} lastResult={settingResults.shutter_speed_index}
-        />
       </div>
     </div>
   );
