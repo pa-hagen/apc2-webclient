@@ -11,11 +11,13 @@ const READABLE = [
   { key: 'white_balance', label: 'White balance' },
   { key: 'f_number', label: 'F-stop' },
   { key: 'focus_distance_m', label: 'Focus distance' },
+  { key: 'focus_mode', label: 'Focus mode' },
 ];
 
 export default function SettingsPanel({ send, status, controlLink, getResults = {}, settingResults = {} }) {
   const [setAt, setSetAt] = useState(0);
   const [value, setValue] = useState('');
+  const [focusModeValue, setFocusModeValue] = useState('AF_S');
   // Per-key "requested at" timestamps so each row can show "Requesting…" until a fresh result lands.
   const [reqAt, setReqAt] = useState({});
   const linkDown = controlLink?.state !== 'up';
@@ -30,6 +32,8 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
     send({ t: 'get-setting', key, reqId: `get-${key}-${ts}` });
   };
   const requestAll = () => READABLE.forEach((r) => requestKey(r.key));
+
+  const focusModeOptions = ['AF_S', 'MF'];
 
   const applyExposure = () => {
     const v = value.trim();
@@ -94,6 +98,31 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
               {setResult.ok
                 ? <span className="badge good">set OK · {setResult.value}</span>
                 : <span className="badge bad">FAIL · {setResult.error || 'unknown'}</span>}
+            </div>
+          )}
+        </div>
+
+        <div className="section">
+          <h3>Set focus mode</h3>
+          <div className="row">
+            <label>Focus mode</label>
+            <select
+              disabled={disabled}
+              value={focusModeValue}
+              onChange={(e) => setFocusModeValue(e.target.value)}
+            >
+              {focusModeOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <button
+              disabled={disabled || !focusModeValue || focusModeOptions.length === 0}
+              onClick={() => send({ t: 'setting', key: 'focus_mode', value: focusModeValue, reqId: `set-focus_mode-${Date.now()}` })}
+            >Set</button>
+          </div>
+          {settingResults.focus_mode && (
+            <div className="row">
+              {settingResults.focus_mode.ok
+                ? <span className="badge good">set OK · {settingResults.focus_mode.value}</span>
+                : <span className="badge bad">FAIL · {settingResults.focus_mode.error || 'unknown'}</span>}
             </div>
           )}
         </div>
