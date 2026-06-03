@@ -60,6 +60,7 @@ export function useApc2Socket(url) {
   const [diagnose, setDiagnose] = useState(null);
   // Latest get-setting result keyed by setting key: { iso: { ok, value, error, ts }, ... }
   const [getResults, setGetResults] = useState({});
+  const [liveViewFrame, setLiveViewFrame] = useState(null);
 
   const sockRef = useRef(null);
   const backoffRef = useRef(500);
@@ -123,6 +124,9 @@ export function useApc2Socket(url) {
           case 'diagnose-result':
             setDiagnose({ ok: !!m.ok, entries: m.entries || [], error: m.error, ts: Date.now() });
             break;
+          case 'liveview-frame':
+            setLiveViewFrame(m.data);
+            break;
           case 'mavlink-in':
           case 'mavlink-out': {
             // Pull the MAVLink routing target out of the payload (node-mavlink uses camelCase) so the
@@ -169,5 +173,5 @@ export function useApc2Socket(url) {
     try { ws.send(JSON.stringify(obj)); return true; } catch { return false; }
   }, []);
 
-  return { status, welcome, snapshot, stats, controlLink, captures, records, wire, wireCam, images, settingResults, options, diagnose, getResults, send };
+  return { status, welcome, snapshot, stats, controlLink, captures, records, wire, wireCam, images, settingResults, options, diagnose, getResults, liveViewFrame, send };
 }

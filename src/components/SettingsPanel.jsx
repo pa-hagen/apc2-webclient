@@ -14,7 +14,7 @@ const READABLE = [
   { key: 'focus_mode', label: 'Focus mode' },
 ];
 
-export default function SettingsPanel({ send, status, controlLink, getResults = {}, settingResults = {} }) {
+export default function SettingsPanel({ send, status, controlLink, getResults = {}, settingResults = {}, liveViewFrame = null }) {
   const [setAt, setSetAt] = useState(0);
   const [value, setValue] = useState('');
   const [focusModeValue, setFocusModeValue] = useState('AF_S');
@@ -56,6 +56,18 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
     <div className="panel">
       <h2>Camera Settings</h2>
       <div className="panel-body">
+        <div className="section">
+          <h3>Live view</h3>
+          {liveViewFrame
+            ? <img
+                src={`data:image/jpeg;base64,${liveViewFrame}`}
+                alt="live view"
+                style={{ width: '100%', maxWidth: 480, display: 'block', borderRadius: 4 }}
+              />
+            : <span style={{ color: 'var(--dim)' }}>No frame — start camhandler with --liveview</span>
+          }
+        </div>
+
         {linkDown && (
           <div className="section" style={{ color: 'var(--warn)' }}>
             ControlLink is {controlLink?.state ?? 'unknown'} — camhandler must be running with a connected camera for settings to work.

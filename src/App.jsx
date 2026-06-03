@@ -6,7 +6,7 @@ import LivePanel from './components/LivePanel.jsx';
 
 export default function App() {
   const [url, setUrl] = useState(defaultWsUrl());
-  const { status, welcome, snapshot, stats, controlLink, captures, records, wire, wireCam, images, getResults, settingResults, send } = useApc2Socket(url);
+  const { status, welcome, snapshot, stats, controlLink, captures, records, wire, wireCam, images, getResults, settingResults, liveViewFrame, send } = useApc2Socket(url);
   const httpBase = httpBaseFromWs(url);
 
   // Persist whatever the user typed so a refresh keeps the same target.
@@ -32,6 +32,7 @@ export default function App() {
       <SettingsPanel
         send={send} status={status} controlLink={controlLink}
         getResults={getResults} settingResults={settingResults}
+        liveViewFrame={liveViewFrame}
       />
       <LivePanel
         snapshot={snapshot}
