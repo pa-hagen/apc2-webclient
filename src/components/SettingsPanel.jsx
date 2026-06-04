@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 // Camera settings, driven through camhandler's ControlLink. The "current values" section reads live
 // values (shutter/ISO/WB/f-stop/focus distance); the exposure section can also set the shutter speed.
@@ -14,7 +14,16 @@ const READABLE = [
   { key: 'focus_mode', label: 'Focus mode' },
 ];
 
-export default function SettingsPanel({ send, status, controlLink, getResults = {}, settingResults = {}, liveViewFrame = null }) {
+export default function SettingsPanel({ send, status, controlLink, getResults = {}, settingResults = {}, options = {}, liveViewFrame = null }) {
+  const lastFrameAt = useRef(0);
+  const [frameStale, setFrameStale] = useState(false);
+
+  useEffect(() => { if (liveViewFrame) lastFrameAt.current = Date.now(); }, [liveViewFrame]);
+  useEffect(() => {
+    const id = setInterval(() => setFrameStale(lastFrameAt.current > 0 && Date.now() - lastFrameAt.current > 3000), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const [setAt, setSetAt] = useState(0);
   const [value, setValue] = useState('');
   const [focusModeValue, setFocusModeValue] = useState('AF_S');
@@ -34,6 +43,14 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
   const requestAll = () => READABLE.forEach((r) => requestKey(r.key));
 
   const focusModeOptions = ['AF_S', 'MF'];
+  const [fNumberIndex, setFNumberIndex] = useState(0);
+  const fNumberOptions = options.f_number?.options ?? [];
+
+  useEffect(() => {
+    if (status === 'open' && controlLink?.state === 'up' && fNumberOptions.length === 0) {
+      send({ t: 'list-options', key: 'f_number', reqId: `list-f_number-${Date.now()}` });
+    }
+  }, [status, controlLink?.state]);
 
   const applyExposure = () => {
     const v = value.trim();
@@ -62,7 +79,7 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
             ? <img
                 src={`data:image/jpeg;base64,${liveViewFrame}`}
                 alt="live view"
-                style={{ width: '100%', maxWidth: 480, display: 'block', borderRadius: 4 }}
+                style={{ width: '100%', maxWidth: 480, display: 'block', borderRadius: 4, filter: frameStale ? 'grayscale(1)' : 'none', transition: 'filter 0.5s' }}
               />
             : <span style={{ color: 'var(--dim)' }}>No frame — start camhandler with --liveview</span>
           }
@@ -110,6 +127,38 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
               {setResult.ok
                 ? <span className="badge good">set OK · {setResult.value}</span>
                 : <span className="badge bad">FAIL · {setResult.error || 'unknown'}</span>}
+            </div>
+          )}
+        </div>
+
+        <div className="section">
+          <h3>Set f-number</h3>
+          <div className="row">
+            <label>F-stop</label>
+            <select
+              disabled={disabled || fNumberOptions.length === 0}
+              value={fNumberIndex}
+              onChange={(e) => setFNumberIndex(Number(e.target.value))}
+            >
+              {fNumberOptions.length === 0
+                ? <option>Loading…</option>
+                : fNumberOptions.map((o, i) => <option key={i} value={i}>{o}</option>)}
+            </select>
+            <button
+              disabled={disabled || fNumberOptions.length === 0}
+              onClick={() => send({ t: 'setting', key: 'f_number_index', value: fNumberIndex, reqId: `set-f_number-${Date.now()}` })}
+            >Set</button>
+            <button
+              className="secondary"
+              disabled={disabled}
+              onClick={() => send({ t: 'list-options', key: 'f_number', reqId: `list-f_number-${Date.now()}` })}
+            >Refresh</button>
+          </div>
+          {settingResults.f_number_index && (
+            <div className="row">
+              {settingResults.f_number_index.ok
+                ? <span className="badge good">set OK · {settingResults.f_number_index.value}</span>
+                : <span className="badge bad">FAIL · {settingResults.f_number_index.error || 'unknown'}</span>}
             </div>
           )}
         </div>
