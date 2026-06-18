@@ -50,8 +50,10 @@ export function useApc2Socket(url) {
   // Frames addressed at the camera component (apc2's sysid/compid), kept as a separate capped list so
   // the filtered view isn't starved by broadcast telemetry before the cap is applied.
   const [wireCam, setWireCam] = useState([]);
-  // seq -> { file } once a capture's image has been post-processed and is downloadable.
+  // seq -> { file, thumb, ts } once a capture's image has been post-processed and is downloadable.
   const [images, setImages] = useState({});
+  // Capture history loaded from DB on connect: [{seq,ts,success,file,reason,...}]
+  const [history, setHistory] = useState([]);
   // Latest setting-result keyed by setting key. The Settings panel reads its row from here.
   const [settingResults, setSettingResults] = useState({});
   // Option lists fetched on demand: { iso: ['ISO 100', ...], white_balance: [...], shutter_speed: [...] }
@@ -61,6 +63,8 @@ export function useApc2Socket(url) {
   // Latest get-setting result keyed by setting key: { iso: { ok, value, error, ts }, ... }
   const [getResults, setGetResults] = useState({});
   const [liveViewFrame, setLiveViewFrame] = useState(null);
+  // Asset (mast) list from the server's asset store.
+  const [assets, setAssets] = useState([]);
 
   const sockRef = useRef(null);
   const backoffRef = useRef(500);
@@ -107,7 +111,10 @@ export function useApc2Socket(url) {
             setRecords((prev) => [{ ts: Date.now(), record: m.record }, ...prev].slice(0, 50));
             break;
           case 'image-ready':
-            setImages((prev) => ({ ...prev, [m.seq]: { file: m.file } }));
+            setImages((prev) => ({ ...prev, [m.seq]: { file: m.file, thumb: !!m.thumb, ts: m.ts || 0, ...m.exif } }));
+            break;
+          case 'history':
+            setHistory(m.entries || []);
             break;
           case 'controllink':
             setControlLink({ state: m.state, info: m.info ?? null });
@@ -126,6 +133,9 @@ export function useApc2Socket(url) {
             break;
           case 'liveview-frame':
             setLiveViewFrame(m.data);
+            break;
+          case 'asset-list':
+            setAssets(m.assets || []);
             break;
           case 'mavlink-in':
           case 'mavlink-out': {
@@ -173,5 +183,5 @@ export function useApc2Socket(url) {
     try { ws.send(JSON.stringify(obj)); return true; } catch { return false; }
   }, []);
 
-  return { status, welcome, snapshot, stats, controlLink, captures, records, wire, wireCam, images, settingResults, options, diagnose, getResults, liveViewFrame, send };
+  return { status, welcome, snapshot, stats, controlLink, captures, records, wire, wireCam, images, history, settingResults, options, diagnose, getResults, liveViewFrame, assets, send };
 }
