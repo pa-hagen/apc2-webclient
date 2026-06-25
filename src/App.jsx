@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApc2Socket, defaultWsUrl, httpBaseFromWs } from './api/socket.js';
 import GcsPanel from './components/GcsPanel.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import CenterPanel from './components/CenterPanel.jsx';
 import LivePanel from './components/LivePanel.jsx';
+import CapturesSection from './components/CapturesSection.jsx';
 
 const PANEL_LABELS = { left: 'Image Capture', center: 'Live', right: 'Monitor' };
 const DEFAULT_ORDER = ['left', 'center', 'right'];
@@ -22,6 +23,14 @@ function loadWidths() {
     if (s && typeof s === 'object') return s;
   } catch { /* ignore */ }
   return { left: 1, center: 1, right: 1 };
+}
+
+function loadRowSplit() {
+  try {
+    const s = JSON.parse(localStorage.getItem('apc2_row_split'));
+    if (s?.panels > 0 && s?.captures > 0) return s;
+  } catch { /* ignore */ }
+  return { panels: 2, captures: 1 };
 }
 
 // ── Datastore Snapshot section (left panel, collapsed by default) ──────────
@@ -51,10 +60,10 @@ function DatastoreSection({ snapshot }) {
             <div className="k">gimbal yaw rate</div><div className="v">{fmtD(snapshot.gimbal_yaw_abs_rate_dps, 2)} °/s (abs); {fmtD(snapshot.gimbal_yaw_rate_dps, 2)} °/s (body)</div>
             <div className="k">groundspeed</div><div className="v">{fmtD(snapshot.groundspeed_mps, 2)} m/s</div>
             <div className="k">GPS fix / sats</div><div className="v">{snapshot.gps_fix ?? '—'} / {snapshot.gps_sats ?? '—'}</div>
-            <div className="k">mast ID</div><div className="v">{snapshot.mast_id ?? '—'}</div>
-            <div className="k">asset SL_ID</div><div className="v">{snapshot.asset_sl_id ?? '—'}</div>
+            <div className="k">SL_ID</div><div className="v">{snapshot.asset_sl_id ?? '—'}</div>
             <div className="k">asset ID</div><div className="v">{snapshot.asset_id ?? '—'}</div>
             <div className="k">asset name</div><div className="v">{snapshot.asset_name ?? '—'}</div>
+            <div className="k">asset group</div><div className="v">{snapshot.asset_group ?? '—'}</div>
           </div>
         )
       )}
@@ -107,6 +116,25 @@ export default function App() {
 
   useEffect(() => { try { localStorage.setItem('apc2_ws', url); } catch { /* ignore */ } }, [url]);
 
+  // Mast ID simulation
+  const [simulating, setSimulating] = useState(false);
+  const simTimerRef = useRef(null);
+  const stopSim = useCallback(() => {
+    clearInterval(simTimerRef.current);
+    simTimerRef.current = null;
+    setSimulating(false);
+  }, []);
+  const startSim = useCallback(() => {
+    if (!assets.length) return;
+    if (!window.confirm('Start mast ID simulation? This will set a random mast ID every 5 seconds.')) return;
+    setSimulating(true);
+    simTimerRef.current = setInterval(() => {
+      const pick = assets[Math.floor(Math.random() * assets.length)];
+      send({ t: 'gcs', cmd: 'set-sl-id', slId: pick.sl_id });
+    }, 5000);
+  }, [assets, send]);
+  useEffect(() => () => clearInterval(simTimerRef.current), []);
+
   // Panel order (drag-to-reorder)
   const [panelOrder, setPanelOrder] = useState(loadOrder);
   const [dragOver, setDragOver]     = useState(null);
@@ -122,9 +150,36 @@ export default function App() {
     try { localStorage.setItem('apc2_panel_widths', JSON.stringify(widths)); } catch { /* ignore */ }
   }, [widths]);
 
+  // Vertical split between panels row and captures row
+  const [rowSplit, setRowSplit] = useState(loadRowSplit);
+  useEffect(() => {
+    try { localStorage.setItem('apc2_row_split', JSON.stringify(rowSplit)); } catch { /* ignore */ }
+  }, [rowSplit]);
+  const appRef = useRef(null);
+  const startRowResize = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startPanels = rowSplit.panels;
+    const startCaptures = rowSplit.captures;
+    const total = startPanels + startCaptures;
+    const contentH = appRef.current ? appRef.current.clientHeight - (appRef.current.querySelector('.topbar')?.offsetHeight ?? 40) : 600;
+    const onMove = (mv) => {
+      const delta = ((mv.clientY - startY) / contentH) * total;
+      setRowSplit({
+        panels:   Math.max(0.15, startPanels   + delta),
+        captures: Math.max(0.1,  startCaptures - delta),
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
   // Left-panel collapse
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const panelsRef = useRef(null);
 
   // ── Shared capture state (center table + right preview both use pinnedSeq) ──
   const [pinnedSeq, setPinnedSeq] = useState(null);
@@ -134,12 +189,14 @@ export default function App() {
     for (const h of history) bySeq.set(h.seq, { ...h });
     for (const c of captures) {
       const existing = bySeq.get(c.seq) || {};
+      // Don't let a late orphan or a stall-timeout downgrade a row that already has a confirmed success.
+      if (existing.success === true && (c.orphan || (!c.success && existing.file))) continue;
       bySeq.set(c.seq, { ...existing, ts: c.ts, seq: c.seq, success: c.success, file: c.file, reason: c.reason, drift: c.drift, orphan: c.orphan });
     }
     for (const r of records) {
       const rec = r.record;
       const existing = bySeq.get(rec.seq) || { ts: r.ts, seq: rec.seq };
-      bySeq.set(rec.seq, { ...existing, lat: rec.lat, lon: rec.lon, gimbal_yaw_abs_deg: rec.gimbal_yaw_abs_deg, agl_m: rec.agl_m, gimbal_settled: rec.gimbal_settled });
+      bySeq.set(rec.seq, { ...existing, lat: rec.lat, lon: rec.lon, gimbal_yaw_abs_deg: rec.gimbal_yaw_abs_deg, agl_m: rec.agl_m, gimbal_settled: rec.gimbal_settled, asset_sl_id: rec.asset_sl_id ?? null, asset_id: rec.asset_id ?? null, asset_name: rec.asset_name ?? null, asset_group: rec.asset_group ?? null });
     }
     return [...bySeq.values()].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0));
   }, [captures, records, history]);
@@ -166,20 +223,54 @@ export default function App() {
     }
   }, [latestReadySeq]);
 
-  // ── Resize handle ──────────────────────────────────────────────────────
-  const startResize = (e, idA, idB) => {
+  const appBodyRef     = useRef(null);
+  const rightSectionRef = useRef(null);
+
+  // Resize left panel vs right section (scales mid+right proportionally)
+  const startLeftSepResize = (e) => {
     e.preventDefault();
+    const leftId    = panelOrder[0];
+    const midId     = panelOrder[1];
+    const rightId   = panelOrder[2];
     const startX    = e.clientX;
-    const startA    = widths[idA];
-    const startB    = widths[idB];
-    const containerW = panelsRef.current?.offsetWidth ?? 1;
-    const totalFlex  = Object.values(widths).reduce((s, v) => s + v, 0);
-    const onMove = (e) => {
-      const delta = ((e.clientX - startX) / containerW) * totalFlex;
+    const startLeft = widths[leftId];
+    const startMid  = widths[midId];
+    const startRight = widths[rightId];
+    const rightTotal = startMid + startRight;
+    const total      = startLeft + rightTotal;
+    const containerW = appBodyRef.current?.offsetWidth ?? 1;
+    const onMove = (mv) => {
+      const delta    = ((mv.clientX - startX) / containerW) * total;
+      const newLeft  = Math.max(0.05, Math.min(total - 0.1, startLeft + delta));
+      const ratio    = rightTotal > 0 ? (total - newLeft) / rightTotal : 1;
+      setWidths({
+        [leftId]:  newLeft,
+        [midId]:   Math.max(0.04, startMid  * ratio),
+        [rightId]: Math.max(0.04, startRight * ratio),
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  // Resize between center+right panels inside the right section
+  const startInnerResize = (e, idA, idB) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startA = widths[idA];
+    const startB = widths[idB];
+    const containerW = rightSectionRef.current?.offsetWidth ?? 1;
+    const localTotal = startA + startB;
+    const onMove = (mv) => {
+      const delta = ((mv.clientX - startX) / containerW) * localTotal;
       setWidths((prev) => ({
         ...prev,
-        [idA]: Math.max(0.08, startA + delta),
-        [idB]: Math.max(0.08, startB - delta),
+        [idA]: Math.max(0.04, startA + delta),
+        [idB]: Math.max(0.04, startB - delta),
       }));
     };
     const onUp = () => {
@@ -211,7 +302,7 @@ export default function App() {
   const renderContent = (id) => {
     if (id === 'left') return (
       <>
-        <GcsPanel send={send} status={status} stats={stats} />
+        <GcsPanel send={send} status={status} stats={stats} controlLink={controlLink} />
         <hr className="panel-divider" />
         <SettingsPanel
           send={send} status={status} controlLink={controlLink}
@@ -223,13 +314,7 @@ export default function App() {
       </>
     );
     if (id === 'center') return (
-      <CenterPanel
-        liveViewFrame={liveViewFrame}
-        rows={rows} images={images} httpBase={httpBase}
-        pinnedSeq={pinnedSeq} setPinnedSeq={setPinnedSeq}
-        assets={assets}
-        currentMastSlId={snapshot?.asset_sl_id ?? null}
-      />
+      <CenterPanel liveViewFrame={liveViewFrame} />
     );
     if (id === 'right') return (
       <LivePanel
@@ -239,13 +324,30 @@ export default function App() {
     );
   };
 
+  const leftId  = panelOrder[0];
+  const midId   = panelOrder[1];
+  const rightId = panelOrder[2];
+
+  const renderPanel = (id, extraBodyClass = '') => (
+    <div
+      className={`panel${dragOver === id ? ' drag-over' : ''}`}
+      style={{ flex: widths[id] }}
+      onDragOver={(e) => onDragOver(e, id)}
+      onDragLeave={() => setDragOver(null)}
+      onDrop={() => onDrop(id)}
+    >
+      <h2 draggable onDragStart={() => onDragStart(id)} onDragEnd={onDragEnd}>
+        <span>{PANEL_LABELS[id]}</span>
+      </h2>
+      <div className={`panel-body${extraBodyClass}`}>{renderContent(id)}</div>
+    </div>
+  );
+
   return (
-    <div className={`app${status !== 'open' ? ' disconnected' : ''}`}>
+    <div className={`app${status !== 'open' ? ' disconnected' : ''}`} ref={appRef}>
 
       <div className="topbar">
         <span className="title">apc2 web client</span>
-        <span className={`dot ${status === 'open' ? 'on' : status === 'connecting' ? 'warn' : 'off'}`} />
-        <span style={{ color: 'var(--dim)' }}>{status}</span>
         <span className="url">→</span>
         <input value={url} onChange={(e) => setUrl(e.target.value)} />
         {welcome?.apc2 && (
@@ -255,67 +357,81 @@ export default function App() {
           </span>
         )}
         <span style={{ color: 'var(--line)', margin: '0 4px' }}>|</span>
-        <span className={`dot ${controlLink.state === 'up' ? 'on' : controlLink.state === 'down' ? 'off' : ''}`} />
-        <span style={{ color: 'var(--dim)' }}>
-          cam {controlLink.state ?? '—'}
-          {controlLink.state === 'up' && controlLink.info?.model ? ` · ${controlLink.info.model}` : ''}
+        <span className={`dot ${status === 'open' ? 'on' : status === 'connecting' ? 'warn' : 'off'}`} />
+        <span className="status-text" style={{ width: '5.5rem' }}>{status}</span>
+        <span style={{ color: 'var(--line)', margin: '0 4px' }}>|</span>
+        <span title={status === 'open' && controlLink.state === 'up' && !controlLink.cameraReady ? 'Camhandler OK, but no camera is connected' : undefined}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '12px' }}>
+          <span className={`dot ${status !== 'open' ? '' : controlLink.cameraReady ? 'on' : controlLink.state === 'up' ? 'warn' : 'off'}`} />
+          <span className="status-text" style={{ width: '6rem' }}>camhandler</span>
         </span>
+        <span style={{ color: 'var(--line)', margin: '0 4px' }}>|</span>
+        <span className={`dot ${status !== 'open' ? '' : controlLink.cameraReady ? 'on' : controlLink.state === 'up' ? 'off' : ''}`} />
+        <span className="status-text" style={{ width: '10rem' }}>
+          cam {controlLink.cameraReady ? (controlLink.info?.model ?? 'ready') : controlLink.state === 'up' ? 'not connected' : '—'}
+        </span>
+        <button
+          onClick={simulating ? stopSim : startSim}
+          title={simulating ? 'Stop mast ID simulation' : 'Simulate mast ID (picks random asset every 5 seconds)'}
+          style={{ fontSize: '0.75rem', padding: '2px 8px', ...(simulating ? { background: '#e53e3e', color: '#fff', borderColor: '#e53e3e' } : {}) }}
+        >
+          {simulating ? 'Stop Sim' : 'Sim Mast'}
+        </button>
       </div>
 
-      <div className="panels-row" ref={panelsRef}>
-        {panelOrder.map((id, i) => {
-          const isLeftmost  = i === 0;
-          const isCollapsed = isLeftmost && leftCollapsed;
-          const showHandle  = i > 0 && !(i === 1 && leftCollapsed);
+      <div className="app-body" ref={appBodyRef}>
 
-          return (
-            <React.Fragment key={id}>
-              {showHandle && (
-                <div
-                  className="resize-handle"
-                  onMouseDown={(e) => startResize(e, panelOrder[i - 1], id)}
-                />
-              )}
+        {/* ── Left panel — full height ── */}
+        {leftCollapsed ? (
+          <div className="panel collapsed">
+            <button className="expand-btn" onClick={() => setLeftCollapsed(false)} title={`Expand ${PANEL_LABELS[leftId]}`}>▶</button>
+          </div>
+        ) : (
+          <div
+            className={`panel${dragOver === leftId ? ' drag-over' : ''}`}
+            style={{ flex: widths[leftId] }}
+            onDragOver={(e) => onDragOver(e, leftId)}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={() => onDrop(leftId)}
+          >
+            <h2 draggable onDragStart={() => onDragStart(leftId)} onDragEnd={onDragEnd}>
+              <span>{PANEL_LABELS[leftId]}</span>
+              <button
+                className="collapse-btn"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); setLeftCollapsed(true); }}
+                title="Collapse panel"
+              >◀</button>
+            </h2>
+            <div className="panel-body">{renderContent(leftId)}</div>
+          </div>
+        )}
 
-              <div
-                className={`panel${dragOver === id ? ' drag-over' : ''}${isCollapsed ? ' collapsed' : ''}`}
-                style={isCollapsed ? undefined : { flex: widths[id] }}
-                onDragOver={(e) => onDragOver(e, id)}
-                onDragLeave={() => setDragOver(null)}
-                onDrop={() => onDrop(id)}
-              >
-                {isCollapsed ? (
-                  <button
-                    className="expand-btn"
-                    onClick={() => setLeftCollapsed(false)}
-                    title={`Expand ${PANEL_LABELS[id]}`}
-                  >▶</button>
-                ) : (
-                  <>
-                    <h2
-                      draggable
-                      onDragStart={() => onDragStart(id)}
-                      onDragEnd={onDragEnd}
-                    >
-                      <span>{PANEL_LABELS[id]}</span>
-                      {isLeftmost && (
-                        <button
-                          className="collapse-btn"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => { e.stopPropagation(); setLeftCollapsed(true); }}
-                          title="Collapse panel"
-                        >◀</button>
-                      )}
-                    </h2>
-                    <div className={`panel-body${id === 'center' ? ' panel-body--fill' : ''}`}>
-                      {renderContent(id)}
-                    </div>
-                  </>
-                )}
-              </div>
-            </React.Fragment>
-          );
-        })}
+        {!leftCollapsed && (
+          <div className="resize-handle" onMouseDown={startLeftSepResize} />
+        )}
+
+        {/* ── Right section: center+right panels above, captures below ── */}
+        <div className="right-section" ref={rightSectionRef}>
+          <div className="panels-row" style={{ flex: rowSplit.panels }}>
+            {renderPanel(midId, midId === 'center' ? ' panel-body--fill' : '')}
+            <div className="resize-handle" onMouseDown={(e) => startInnerResize(e, midId, rightId)} />
+            {renderPanel(rightId, rightId === 'center' ? ' panel-body--fill' : '')}
+          </div>
+
+          <div className="row-sep" onMouseDown={startRowResize} />
+
+          <div className="captures-row" style={{ flex: rowSplit.captures }}>
+            <CapturesSection
+              rows={rows} images={images} httpBase={httpBase}
+              pinnedSeq={pinnedSeq} setPinnedSeq={setPinnedSeq}
+              assets={assets}
+              currentMastSlId={snapshot?.asset_sl_id ?? null}
+              simulating={simulating} stopSim={stopSim} startSim={startSim}
+            />
+          </div>
+        </div>
+
       </div>
 
     </div>

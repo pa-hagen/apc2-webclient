@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 
-export default function GcsPanel({ send, status, stats }) {
+export default function GcsPanel({ send, status, stats, controlLink }) {
   const [ledgerOpen, setLedgerOpen] = useState(false);
-  const disabled = status !== 'open';
+  const disabled = status !== 'open' || !controlLink?.cameraReady;
 
   return (
     <>

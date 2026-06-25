@@ -13,7 +13,7 @@ function ImportDialog({ httpBase, onClose, onImported }) {
   const [step, setStep]         = useState('pick');   // 'pick' | 'map' | 'importing' | 'done' | 'error'
   const [geoJson, setGeoJson]   = useState(null);
   const [propKeys, setPropKeys] = useState([]);
-  const [mapping, setMapping]   = useState({ sl_id: '', id: '', name: '' });
+  const [mapping, setMapping]   = useState({ sl_id: '', id: '', name: '', group: '' });
   const [result, setResult]     = useState(null);
   const fileRef = useRef();
 
@@ -33,7 +33,7 @@ function ImportDialog({ httpBase, onClose, onImported }) {
         const keys = [...keySet].sort();
         setGeoJson({ features });
         setPropKeys(keys);
-        setMapping({ sl_id: keys[0] ?? '', id: keys[1] ?? '', name: '' });
+        setMapping({ sl_id: keys[0] ?? '', id: keys[1] ?? '', name: '', group: '' });
         setStep('map');
       } catch (e) {
         setResult({ ok: false, error: `JSON parse error: ${e.message}` });
@@ -50,7 +50,7 @@ function ImportDialog({ httpBase, onClose, onImported }) {
       const res = await fetch(`${httpBase}/assets/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ features: geoJson.features, mapping: { sl_id: mapping.sl_id, id: mapping.id, name: mapping.name || null } }),
+        body: JSON.stringify({ features: geoJson.features, mapping: { sl_id: mapping.sl_id, id: mapping.id, name: mapping.name || null, group: mapping.group || null } }),
       });
       const body = await res.json();
       if (body.ok) {
@@ -93,7 +93,7 @@ function ImportDialog({ httpBase, onClose, onImported }) {
                   <select value={mapping.sl_id} onChange={(e) => setMapping((m) => ({ ...m, sl_id: e.target.value }))} style={{ width: '100%' }}>
                     {propKeys.map((k) => <option key={k} value={k}>{k}</option>)}
                   </select>
-                  <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 2 }}>must be an integer — becomes the MAVLink mast ID</div>
+                  <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 2 }}>must be an integer — sent via MAVLink USER_1 command</div>
                 </div>
                 <div className="k">ID <span style={{ color: 'var(--bad)' }}>*</span></div>
                 <div className="v">
@@ -108,6 +108,14 @@ function ImportDialog({ httpBase, onClose, onImported }) {
                     {propKeys.map((k) => <option key={k} value={k}>{k}</option>)}
                   </select>
                   <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 2 }}>optional display label</div>
+                </div>
+                <div className="k">Group</div>
+                <div className="v">
+                  <select value={mapping.group} onChange={(e) => setMapping((m) => ({ ...m, group: e.target.value }))} style={{ width: '100%' }}>
+                    <option value="">(none)</option>
+                    {propKeys.map((k) => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                  <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 2 }}>optional grouping/category</div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -175,20 +183,22 @@ export default function AssetPanel({ assets = [], httpBase = '', currentMastSlId
           <table>
             <thead>
               <tr>
-                <th style={{ width: 64 }}>SL_ID</th>
+                <th style={{ width: 56 }}>SL_ID</th>
                 <th>ID</th>
                 <th>Name</th>
+                <th>Group</th>
                 <th style={{ width: 56 }}>Captures</th>
               </tr>
             </thead>
             <tbody>
               {assets.length === 0
-                ? <tr><td colSpan={4} style={{ color: 'var(--dim)', textAlign: 'center', padding: '8px 0' }}>No assets — import a GeoJSON file</td></tr>
+                ? <tr><td colSpan={5} style={{ color: 'var(--dim)', textAlign: 'center', padding: '8px 0' }}>No assets — import a GeoJSON file</td></tr>
                 : assets.map((a) => (
                   <tr key={a.sl_id} className={a.sl_id === currentMastSlId ? 'asset-row active' : 'asset-row'}>
                     <td>{a.sl_id}</td>
                     <td>{a.id}</td>
                     <td style={{ color: 'var(--dim)' }}>{a.name ?? '—'}</td>
+                    <td style={{ color: 'var(--dim)' }}>{a.group ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>{a.capture_count ?? 0}</td>
                   </tr>
                 ))

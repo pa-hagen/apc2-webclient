@@ -7,6 +7,7 @@ const READABLE = [
   { key: 'f_number', label: 'F-stop' },
   { key: 'focus_position', label: 'Focus position' },
   { key: 'focus_mode', label: 'Focus mode' },
+  { key: 'focal_distance_reported', label: 'Focus distance Reported' },
 ];
 
 const SHUTTER_OPTIONS = [
@@ -22,7 +23,7 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
   const [fNumberIndex, setFNumberIndex] = useState('');
 
   const linkDown = controlLink?.state !== 'up';
-  const disabled = status !== 'open' || linkDown;
+  const disabled = status !== 'open' || !controlLink?.cameraReady;
 
   const fNumberOptions = options.f_number?.options ?? [];
 
@@ -30,13 +31,13 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
   const setResult = settingResults.shutter_speed;
   const settingPending = setAt > 0 && (!setResult || setResult.ts < setAt);
 
-  // Auto-request all settings and option lists when controlLink comes up
+  // Auto-request all settings and option lists when camera becomes ready
   useEffect(() => {
-    if (status !== 'open' || controlLink?.state !== 'up') return;
+    if (status !== 'open' || !controlLink?.cameraReady) return;
     const ts = Date.now();
     READABLE.forEach((r) => send({ t: 'get-setting', key: r.key, reqId: `get-${r.key}-${ts}` }));
     send({ t: 'list-options', key: 'f_number', reqId: `list-f_number-${ts}` });
-  }, [status, controlLink?.state]);
+  }, [status, controlLink?.cameraReady]);
 
   const renderValue = (key) => {
     const r = getResults[key];
@@ -44,6 +45,11 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
     return r.ok
       ? <span className="badge good">{r.value || '(empty)'}</span>
       : <span className="badge bad">FAIL · {r.error || 'unknown'}</span>;
+  };
+
+  const refreshValues = () => {
+    const ts = Date.now();
+    READABLE.forEach((r) => send({ t: 'get-setting', key: r.key, reqId: `get-${r.key}-${ts}` }));
   };
 
   const applyExposure = () => {
@@ -54,14 +60,17 @@ export default function SettingsPanel({ send, status, controlLink, getResults = 
 
   return (
     <>
-      {linkDown && (
+      {!controlLink?.cameraReady && (
         <div className="section" style={{ color: 'var(--warn)' }}>
-          ControlLink {controlLink?.state ?? 'unknown'} — camhandler must be running with a connected camera.
+          {linkDown ? 'camhandler not reachable' : 'camera not connected'} — controls disabled.
         </div>
       )}
 
       <div className="section">
-        <h3>Current values</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h3 style={{ margin: 0 }}>Current values</h3>
+          <button disabled={disabled} onClick={refreshValues} style={{ padding: '0.1rem 0.5rem', fontSize: '0.8rem' }}>Refresh</button>
+        </div>
         <div className="kv">
           {READABLE.map((r) => (
             <React.Fragment key={r.key}>

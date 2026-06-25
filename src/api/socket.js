@@ -117,7 +117,7 @@ export function useApc2Socket(url) {
             setHistory(m.entries || []);
             break;
           case 'controllink':
-            setControlLink({ state: m.state, info: m.info ?? null });
+            setControlLink((prev) => ({ state: m.state, info: m.info ?? prev?.info ?? null, cameraReady: !!m.cameraReady }));
             break;
           case 'setting-result':
             setSettingResults((prev) => ({ ...prev, [m.key]: { ok: !!m.ok, value: m.value, error: m.error, ts: Date.now() } }));
