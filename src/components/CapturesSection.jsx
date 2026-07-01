@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState, useCallback } from 'react';
 import AssetPanel from './AssetPanel.jsx';
 
 const time = (ts) => new Date(ts).toISOString().slice(11, 23);
@@ -40,9 +40,33 @@ function ExternalLinkIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 4h12M5 4V2.5A.5.5 0 015.5 2h5a.5.5 0 01.5.5V4M6 7v5M10 7v5M3 4l1 9.5A.5.5 0 004.5 14h7a.5.5 0 00.5-.5L13 4" />
+    </svg>
+  );
+}
+
 export default function CapturesSection({ rows = [], images = {}, httpBase = '', pinnedSeq, setPinnedSeq, assets = [], currentMastSlId = null, simulating, stopSim, startSim }) {
   const [page, setPage]         = useState(0);
   const [pageSize, setPageSize] = useState(5);
+
+  const wipeRecords = useCallback(async () => {
+    const answer = window.prompt(
+      'WARNING: This will delete all records in the drone database.\n\nType "Delete" to confirm:'
+    );
+    if (answer !== 'Delete') return;
+    try {
+      const res = await fetch(`${httpBase}/records/wipe`, { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        alert(`Wipe failed: ${body.error || res.status}`);
+      }
+    } catch (e) {
+      alert(`Wipe failed: ${e.message}`);
+    }
+  }, [httpBase]);
 
   const capturesRef    = useRef(null);
   const sectionHeadRef = useRef(null);
@@ -79,7 +103,16 @@ export default function CapturesSection({ rows = [], images = {}, httpBase = '',
     <div className="captures-section">
       <div className="captures-main" ref={capturesRef}>
         <div className="section-head" ref={sectionHeadRef}>
-          <h3>Captures ({displayRows.length}{rows.length > MAX_ROWS ? `/${rows.length}` : ''})</h3>
+          <h3>Captures ({displayRows.length}{rows.length > MAX_ROWS ? `/${rows.length}` : ''})
+            <button
+              className="icon-btn"
+              onClick={wipeRecords}
+              title="Delete all capture records"
+              style={{ marginLeft: '0.4rem', color: '#e53e3e', verticalAlign: 'middle' }}
+            >
+              <TrashIcon />
+            </button>
+          </h3>
           <button
             onClick={simulating ? stopSim : startSim}
             title={simulating ? 'Stop mast ID simulation' : 'Simulate mast ID (random, 5s interval)'}

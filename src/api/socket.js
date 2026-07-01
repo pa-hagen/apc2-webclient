@@ -137,6 +137,12 @@ export function useApc2Socket(url) {
           case 'asset-list':
             setAssets(m.assets || []);
             break;
+          case 'history-wiped':
+            setHistory([]);
+            setCaptures([]);
+            setRecords([]);
+            setImages({});
+            break;
           case 'mavlink-in':
           case 'mavlink-out': {
             // Pull the MAVLink routing target out of the payload (node-mavlink uses camelCase) so the
